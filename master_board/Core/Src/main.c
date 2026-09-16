@@ -27,10 +27,11 @@ void USART2_SendString(char *str);
 uint8_t USART2_ReceiveChar(char *c);
 void ADC_configuration(void);
 void DMA_configuration(void);
+void TIM2_Configuration(void);
 
 char receivedChar;
 volatile uint16_t adcBuffer[1]; // Buffer to store ADC value
-uint8_t PWM_value; // Variable to store scaled ADC value for PWM
+uint8_t PWM_value = 0; // Variable to store scaled ADC value for PWM
 
 int main(void)
 {
@@ -39,14 +40,16 @@ int main(void)
     UART2_Configuration();
     DMA_configuration();
     ADC_configuration();
+    TIM2_Configuration();
 
     char msg[64];
 
     while(1)
     {
-        snprintf(msg, sizeof(msg), "ADC Value: %u\r\n", adcBuffer[0]);
+        snprintf(msg, sizeof(msg), "ADC Value: %u | Duty: %u\r\n", adcBuffer[0], PWM_value);
         USART2_SendString(msg);
-        PWM_value = (adcBuffer[0] * 100) / 4095; // Scale ADC value to 0-100%
+        TIM2 -> CCR1 = (adcBuffer[0] * 999) / 4095; // Update PWM duty cycle based on ADC value
+        PWM_value = (adcBuffer[0] * 100) / 4095; // Scale ADC value to 0-100 for PWM percentage
         for (volatile int i = 0; i < 500000; i++);
     }
 }
@@ -169,4 +172,24 @@ void DMA_configuration(void)
     DMA2_Stream0 -> CR |= DMA_SxCR_CIRC; // Enable circular mode
 
     DMA2_Stream0 -> CR |= DMA_SxCR_EN; // Enable DMA stream 0
+}
+
+void TIM2_Configuration(void)
+{
+    RCC -> AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
+    RCC -> APB1ENR |= RCC_APB1ENR_TIM2EN; // Enable TIM2 clock
+
+    GPIOA -> MODER &= ~GPIO_MODER_MODER5; // Clear mode bits for PA5
+    GPIOA -> MODER |= GPIO_MODER_MODER5_1; // Set PA5 as alternate function mode
+
+    GPIOA -> AFR[0] &= ~GPIO_AFRL_AFRL5; // Clear alternate function bits for PA5
+    GPIOA -> AFR[0] |= GPIO_AFRL_AFRL5_0; // Set alternate function 1 (TIM2) for PA5
+
+    TIM2 -> PSC = (16 - 1); // Set prescaler to 16 (16 MHz / 16 = 1 MHz)
+    TIM2 -> ARR = (1000 - 1); // Set auto-reload value to 1000 (1 MHz / 1000 = 1 kHz)
+    TIM2 -> CCMR1 |= TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1; // Set output compare mode to PWM mode 1
+    TIM2 -> CCMR1 |= TIM_CCMR1_OC1PE; // Enable output compare preload
+    TIM2 -> CCER |= TIM_CCER_CC1E; // Enable output for channel 1
+    TIM2 -> CR1 |= TIM_CR1_ARPE; // Enable auto-reload preload
+    TIM2 -> CR1 |= TIM_CR1_CEN; // Enable TIM2
 }
