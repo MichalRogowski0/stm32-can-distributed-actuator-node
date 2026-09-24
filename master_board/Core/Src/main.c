@@ -28,10 +28,13 @@ uint8_t USART2_ReceiveChar(char *c);
 void ADC_configuration(void);
 void DMA_configuration(void);
 void TIM2_Configuration(void);
+void CAN1_Configuration(void);
+void CAN1_SendMessage(uint32_t id, uint8_t *data, uint8_t len);
 
 char receivedChar;
 volatile uint16_t adcBuffer[1]; // Buffer to store ADC value
 uint8_t PWM_value = 0; // Variable to store scaled ADC value for PWM
+char msg[64]; // Buffer for UART messages
 
 int main(void)
 {
@@ -41,16 +44,16 @@ int main(void)
     DMA_configuration();
     ADC_configuration();
     TIM2_Configuration();
-
-    char msg[64];
+    CAN1_Configuration();
 
     while(1)
     {
-        snprintf(msg, sizeof(msg), "ADC Value: %u | Duty: %u\r\n", adcBuffer[0], PWM_value);
+        PWM_value = (adcBuffer[0] * 100) / 4095;
+        TIM2->CCR1 = (adcBuffer[0] * 999) / 4095;
+        snprintf(msg, sizeof(msg), "ADC Value: %u | Duty: %u%%\r\n", adcBuffer[0], PWM_value);
         USART2_SendString(msg);
-        TIM2 -> CCR1 = (adcBuffer[0] * 999) / 4095; // Update PWM duty cycle based on ADC value
-        PWM_value = (adcBuffer[0] * 100) / 4095; // Scale ADC value to 0-100 for PWM percentage
-        for (volatile int i = 0; i < 500000; i++);
+        CAN1_SendMessage(0x103, &PWM_value, 1);
+        for (volatile int i = 0; i < 50000; i++);
     }
 }
 
@@ -96,6 +99,7 @@ void UART2_Configuration(void)
 {
     RCC -> AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
 
+    GPIOA->MODER &= ~(GPIO_MODER_MODER2 | GPIO_MODER_MODER3);
     //PA2 - TX
     GPIOA -> MODER |= GPIO_MODER_MODE2_1; // Alternate function mode
     GPIOA -> AFR[0] &= ~GPIO_AFRL_AFRL2;
@@ -192,4 +196,65 @@ void TIM2_Configuration(void)
     TIM2 -> CCER |= TIM_CCER_CC1E; // Enable output for channel 1
     TIM2 -> CR1 |= TIM_CR1_ARPE; // Enable auto-reload preload
     TIM2 -> CR1 |= TIM_CR1_CEN; // Enable TIM2
+}
+
+void CAN1_Configuration(void){
+    RCC -> AHB1ENR |= RCC_AHB1ENR_GPIOBEN; // Enable GPIOB clock
+
+    //PB8 - CAN1_RX
+    GPIOB -> MODER &= ~GPIO_MODER_MODER8; // Clear mode bits for PB8
+    GPIOB -> MODER |= GPIO_MODER_MODER8_1; // Set PB8 as alternate function mode
+
+    GPIOB -> AFR[1] &= ~GPIO_AFRH_AFRH0; // Clear alternate function bits for PB8
+    GPIOB -> AFR[1] |= GPIO_AFRH_AFRH0_0 | GPIO_AFRH_AFRH0_3; // Set alternate function 9 (CAN1) for PB8
+
+    GPIOB -> PUPDR &= ~GPIO_PUPDR_PUPDR8; // Clear pull-up/pull-down bits for PB8
+    GPIOB -> PUPDR |= GPIO_PUPDR_PUPDR8_0; // Set PB8 as pull-up
+
+    //PB9 - CAN1_TX
+    GPIOB -> MODER &= ~GPIO_MODER_MODER9; // Clear mode bits for PB9
+    GPIOB -> MODER |= GPIO_MODER_MODER9_1; // Set PB9 as alternate function mode
+
+    GPIOB -> AFR[1] &= ~GPIO_AFRH_AFRH1; // Clear alternate function bits for PB9
+    GPIOB -> AFR[1] |= GPIO_AFRH_AFRH1_0 | GPIO_AFRH_AFRH1_3; // Set alternate function 9 (CAN1) for PB9
+    
+    GPIOB -> OSPEEDR |= GPIO_OSPEEDR_OSPEED8 | GPIO_OSPEEDR_OSPEED9; // Set PB8 and PB9 to high speed
+
+    //CAN1 configuration
+    RCC -> APB1ENR |= RCC_APB1ENR_CAN1EN; // Enable CAN1 clock
+
+    CAN1 -> MCR &= ~CAN_MCR_SLEEP; // Exit sleep mode
+    while(CAN1 -> MSR & CAN_MSR_SLAK); // Wait until sleep mode is exited
+    CAN1 -> MCR |= CAN_MCR_INRQ; // Request initialization mode
+    while(!(CAN1 -> MSR & CAN_MSR_INAK)); // Wait until initialization
+
+    CAN1 -> BTR = (2 - 1) << CAN_BTR_BRP_Pos; // Set prescaler to 2 (16 MHz / 2 = 8 MHz)
+    CAN1 -> BTR |= (11 -1) << CAN_BTR_TS1_Pos; // Set time segment 1 to 11 (8 MHz / (1 + 11 + 2) = 500 kHz)
+    CAN1 -> BTR |= (4 - 1) << CAN_BTR_TS2_Pos; // Set time segment 2 to 4
+    CAN1 -> BTR &= ~CAN_BTR_SJW; // Set resynchronization jump width to 1
+
+    CAN1 -> MCR |= CAN_MCR_ABOM; // Enable automatic bus-off management
+    CAN1 -> MCR |= CAN_MCR_NART; // Enable no automatic retransmission
+    CAN1 -> MCR &= ~CAN_MCR_INRQ; // Exit initialization mode
+    while(CAN1 -> MSR & CAN_MSR_INAK); // Wait until normal mode is entered
+}
+
+void CAN1_SendMessage(uint32_t id, uint8_t *data, uint8_t len)
+{
+    if(len > 8) 
+    {
+        len = 8; // Limit data length to 8 bytes
+    }
+
+    uint32_t tsr = CAN1->TSR;
+    uint8_t mailbox;
+
+    if (tsr & CAN_TSR_TME0) mailbox = 0;
+    else if (tsr & CAN_TSR_TME1) mailbox = 1;
+    else if (tsr & CAN_TSR_TME2) mailbox = 2;
+    else return;
+
+    CAN1 -> sTxMailBox[mailbox].TDTR = len << CAN_TDT0R_DLC_Pos; // Set data length
+    CAN1 -> sTxMailBox[mailbox].TDLR = *data; // Set data to send
+    CAN1 -> sTxMailBox[mailbox].TIR = (id << CAN_TI0R_STID_Pos) | CAN_TI0R_TXRQ; // Set standard identifier and request transmission
 }
