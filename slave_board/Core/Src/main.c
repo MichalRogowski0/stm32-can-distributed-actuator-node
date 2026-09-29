@@ -17,6 +17,11 @@
 #include "main.h"
 #include "stm32f446xx.h"
 
+#define PIN_IN1   GPIO_BSRR_BS0
+#define PIN_IN2   GPIO_BSRR_BS14
+#define PIN_IN3   GPIO_BSRR_BS1
+#define PIN_IN4   GPIO_BSRR_BS15
+#define MOTOR_PINS_ALL (PIN_IN1 | PIN_IN2 | PIN_IN3 | PIN_IN4)
 
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -26,10 +31,19 @@ void CAN1_Configuration(void);
 uint8_t CAN1_Receive_Message(volatile uint32_t *id, volatile uint8_t *data, volatile uint8_t *len);
 void CAN1_SendMessage(uint32_t id, uint8_t *data, uint8_t len);
 void CAN1_RX0_IRQHandler(void);
+void Stepper_motor_step(int8_t dir);
 
 volatile uint32_t received_id;
 volatile uint8_t received_data;
 volatile uint8_t received_length;
+
+static const uint32_t step_table[4] = 
+{
+    PIN_IN1 | PIN_IN2,
+    PIN_IN2 | PIN_IN3,
+    PIN_IN3 | PIN_IN4,
+    PIN_IN4 | PIN_IN1
+};
 
 int main(void)
 {
@@ -40,7 +54,24 @@ int main(void)
 
     while (1)
     {
-        
+        // Wersja dla 4-krokowej sekwencji (Full-step): 2048 kroków = 1 pełny obrót 360°
+        for (int i = 0; i < 2048; i++)
+        {
+            Stepper_motor_step(1);
+            for (volatile uint32_t d = 0; d < 8000; d++); // Zwiększ z 2000 na 8000
+        }
+
+        Stepper_motor_step(0);
+        for (volatile uint32_t d = 0; d < 500000; d++); // Postój na chwilę
+
+        for (int i = 0; i < 2048; i++)
+        {
+            Stepper_motor_step(-1);
+            for (volatile uint32_t d = 0; d < 8000; d++);
+        }
+
+        Stepper_motor_step(0);
+        for (volatile uint32_t d = 0; d < 500000; d++);
     }
 }
 
@@ -104,6 +135,23 @@ void GPIO_Configuration(void)
     GPIOB -> AFR[1] |= GPIO_AFRH_AFRH1_0 | GPIO_AFRH_AFRH1_3; // Set alternate function 9 (CAN1) for PB9
     
     GPIOB -> OSPEEDR |= GPIO_OSPEEDR_OSPEED8 | GPIO_OSPEEDR_OSPEED9; // Set PB8 and PB9 to high speed
+
+    //IN1 - PB0
+    GPIOB -> MODER &= ~GPIO_MODER_MODER0; // Clear mode bits for PB0
+    GPIOB -> MODER |= GPIO_MODER_MODER0_0; // Set PB0 as output mode
+
+    //IN2 - PB1
+    GPIOB -> MODER &= ~GPIO_MODER_MODER1; // Clear mode bits for PB1
+    GPIOB -> MODER |= GPIO_MODER_MODER1_0; // Set PB1 as output mode
+
+    //IN3 - PB14
+    GPIOB -> MODER &= ~GPIO_MODER_MODER14; // Clear mode bits for PB14
+    GPIOB -> MODER |= GPIO_MODER_MODER14_0; // Set PB14 as output mode
+
+    //IN4 - PB15
+    GPIOB -> MODER &= ~GPIO_MODER_MODER15; // Clear mode bits for PB15
+    GPIOB -> MODER |= GPIO_MODER_MODER15_0; // Set PB15 as output mode
+
 }
 
 void TIM2_Configuration(void)
@@ -208,4 +256,28 @@ void CAN1_RX0_IRQHandler(void)
             TIM2 -> CCR1 = received_data * 4095 / 100; // Update PWM duty cycle based on received data
         }
     }
+}
+
+void Stepper_motor_step(int8_t dir)
+{
+    static uint8_t actual_step = 0;
+
+    if (dir == 0)
+    {
+        GPIOB -> BSRR = MOTOR_PINS_ALL << 16; // Reset all motor pins
+        return;
+    }
+    if (dir > 0)
+    {
+        actual_step = (actual_step + 1) % 4; // Move forward
+    } 
+    else if (dir < 0)
+    {
+        actual_step = (actual_step + 3) % 4; // Move backward
+    }
+
+    uint32_t set_mask = step_table[actual_step];
+    uint32_t reset_mask = MOTOR_PINS_ALL & ~set_mask;
+    GPIOB -> BSRR = set_mask | (reset_mask << 16); // Set and reset motor pins accordingly
+
 }
