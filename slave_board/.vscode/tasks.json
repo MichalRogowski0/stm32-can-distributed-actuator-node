@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Slave",
+      "type": "shell",
+      "command": "cmake --build \"${workspaceFolder:slave_board}/build/Debug\"",
+      "group": "build",
+      "problemMatcher": "$gcc"
+    }
+  ]
+}

@@ -1,21 +1,26 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Debug STM32F446 Slave",
-            "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/build/Debug/slave_board.elf",
-            "request": "launch",
-            "type": "cortex-debug",
-            "runToEntryPoint": "main",
-            "servertype": "openocd",
-            "device": "STM32F446RE",
-            "gdbPath": "/usr/bin/gdb-multiarch",
-            "configFiles": [
-                "interface/stlink.cfg",
-                "target/stm32f4x.cfg"
-            ],
-            "preLaunchTask": "CMake: build"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug - SLAVE",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/Debug/slave_board.elf",
+      "device": "STM32F446RE",
+      "gdbPath": "/usr/bin/gdb-multiarch",
+      "configFiles": [
+        "interface/stlink.cfg",
+        "target/stm32f4x.cfg"
+      ],
+      "openOCDPreConfigLaunchCommands": [
+        "adapter serial 066AFF515086874967255728"
+      ],
+      "gdbport": 3334,
+      "telnetPort": 4445,
+      "tclPort": 6667,
+      "runToEntryPoint": "main"
+    }
+  ]
 }

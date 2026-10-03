@@ -1,20 +1,26 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Debug STM32 (OpenOCD)",
-            "cwd": "${workspaceFolder}",
-            "executable": "${command:cmake.launchTargetPath}",
-            "request": "launch",
-            "type": "cortex-debug",
-            "runToEntryPoint": "main",
-            "servertype": "openocd",
-            "gdbPath": "gdb-multiarch",
-            "device": "STM32F446RE",
-            "configFiles": [
-                "interface/stlink.cfg",
-                "target/stm32f4x.cfg"
-            ]
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug - MASTER",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/Debug/master_board.elf",
+      "device": "STM32F446RE",
+      "gdbPath": "/usr/bin/gdb-multiarch",
+      "configFiles": [
+        "interface/stlink.cfg",
+        "target/stm32f4x.cfg"
+      ],
+      "openOCDPreConfigLaunchCommands": [
+        "adapter serial 0671FF535767864967144408"
+      ],
+      "gdbport": 3333,
+      "telnetPort": 4444,
+      "tclPort": 6666,
+      "runToEntryPoint": "main"
+    }
+  ]
 }

@@ -53,6 +53,9 @@ int main(void)
         snprintf(msg, sizeof(msg), "ADC Value: %u | Duty: %u%%\r\n", adcBuffer[0], PWM_value);
         USART2_SendString(msg);
         CAN1_SendMessage(0x103, &PWM_value, 1);
+
+        uint8_t motor_dir = 1;
+        CAN1_SendMessage(0x120, &motor_dir, 1);
         for (volatile int i = 0; i < 50000; i++);
     }
 }
@@ -234,7 +237,7 @@ void CAN1_Configuration(void){
     CAN1 -> BTR &= ~CAN_BTR_SJW; // Set resynchronization jump width to 1
 
     CAN1 -> MCR |= CAN_MCR_ABOM; // Enable automatic bus-off management
-    CAN1 -> MCR |= CAN_MCR_NART; // Enable no automatic retransmission
+    //CAN1 -> MCR |= CAN_MCR_NART; // Enable no automatic retransmission
     CAN1 -> MCR &= ~CAN_MCR_INRQ; // Exit initialization mode
     while(CAN1 -> MSR & CAN_MSR_INAK); // Wait until normal mode is entered
 }

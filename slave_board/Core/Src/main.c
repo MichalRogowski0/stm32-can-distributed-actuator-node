@@ -32,16 +32,19 @@ uint8_t CAN1_Receive_Message(volatile uint32_t *id, volatile uint8_t *data, vola
 void CAN1_SendMessage(uint32_t id, uint8_t *data, uint8_t len);
 void CAN1_RX0_IRQHandler(void);
 void Stepper_motor_step(int8_t dir);
+void CAN1_Filter_Config(void);
+void vTaskMotor(void *pvParameters);
 
 volatile uint32_t received_id;
 volatile uint8_t received_data;
 volatile uint8_t received_length;
+QueueHandle_t xMotorQueue = NULL;
 
 static const uint32_t step_table[4] = 
 {
-    PIN_IN1 | PIN_IN2,
-    PIN_IN2 | PIN_IN3,
-    PIN_IN3 | PIN_IN4,
+    PIN_IN1 | PIN_IN3,
+    PIN_IN3 | PIN_IN2,
+    PIN_IN2 | PIN_IN4,
     PIN_IN4 | PIN_IN1
 };
 
@@ -51,27 +54,19 @@ int main(void)
     GPIO_Configuration();
     TIM2_Configuration();
     CAN1_Configuration();
+    CAN1_Filter_Config();
+
+    xMotorQueue = xQueueCreate(1, sizeof(int8_t));
+
+    if  (xMotorQueue != NULL)
+    {
+        xTaskCreate(vTaskMotor, "vTaskMotor", 128, NULL, 2, NULL);
+        vTaskStartScheduler();
+    }
 
     while (1)
     {
-        // Wersja dla 4-krokowej sekwencji (Full-step): 2048 kroków = 1 pełny obrót 360°
-        for (int i = 0; i < 2048; i++)
-        {
-            Stepper_motor_step(1);
-            for (volatile uint32_t d = 0; d < 8000; d++); // Zwiększ z 2000 na 8000
-        }
 
-        Stepper_motor_step(0);
-        for (volatile uint32_t d = 0; d < 500000; d++); // Postój na chwilę
-
-        for (int i = 0; i < 2048; i++)
-        {
-            Stepper_motor_step(-1);
-            for (volatile uint32_t d = 0; d < 8000; d++);
-        }
-
-        Stepper_motor_step(0);
-        for (volatile uint32_t d = 0; d < 500000; d++);
     }
 }
 
@@ -110,7 +105,6 @@ void Error_Handler(void)
     __disable_irq();
     while (1)
     {
-
     }
 }
 
@@ -118,6 +112,7 @@ void GPIO_Configuration(void)
 {
     RCC -> AHB1ENR |= RCC_AHB1ENR_GPIOBEN; // Enable GPIOB clock
 
+    //PB8 - CAN1_RX
     GPIOB -> MODER &= ~GPIO_MODER_MODER8; // Clear mode bits for PB8
     GPIOB -> MODER |= GPIO_MODER_MODER8_1; // Set PB8 as alternate function mode
 
@@ -151,7 +146,6 @@ void GPIO_Configuration(void)
     //IN4 - PB15
     GPIOB -> MODER &= ~GPIO_MODER_MODER15; // Clear mode bits for PB15
     GPIOB -> MODER |= GPIO_MODER_MODER15_0; // Set PB15 as output mode
-
 }
 
 void TIM2_Configuration(void)
@@ -188,7 +182,10 @@ void CAN1_Configuration(void){
 
     CAN1 -> MCR &= ~CAN_MCR_INRQ; // Exit initialization mode
     while(CAN1 -> MSR & CAN_MSR_INAK); // Wait until normal mode is entered
+}
 
+void CAN1_Filter_Config(void)
+{
     // Filter configuration for CAN1
     CAN1->FMR |= CAN_FMR_FINIT;                  // Enter filter initialization mode
     CAN1->FA1R &= ~CAN_FA1R_FACT0;               // Deactivate filter 0 prior to configuration
@@ -207,7 +204,8 @@ void CAN1_Configuration(void){
     CAN1->FMR &= ~CAN_FMR_FINIT;                 // Exit filter initialization mode
 
     CAN1 -> IER |= CAN_IER_FMPIE0; // Enable FIFO 0 message pending interrupt
-    NVIC_SetPriority(CAN1_RX0_IRQn, 2); // Set priority for CAN1 RX0 interrupt
+    NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_4);
+    NVIC_SetPriority(CAN1_RX0_IRQn, 5); // Set priority for CAN1 RX0 interrupt
     NVIC_EnableIRQ(CAN1_RX0_IRQn); // Enable CAN1 RX0 interrupt in NVIC
 }
 
@@ -255,6 +253,18 @@ void CAN1_RX0_IRQHandler(void)
         {
             TIM2 -> CCR1 = received_data * 4095 / 100; // Update PWM duty cycle based on received data
         }
+        else if(received_id == 0x120)
+        {
+            int8_t dir = 0;
+            if(received_data == 0) dir = 0; //Stop
+            else if(received_data == 1) dir = 1; //Forward
+            else if(received_data == 2) dir = -1; //Backward
+            
+            if(xMotorQueue != NULL)
+            {
+                xQueueOverwriteFromISR(xMotorQueue, &dir, NULL);
+            }
+        }
     }
 }
 
@@ -279,5 +289,24 @@ void Stepper_motor_step(int8_t dir)
     uint32_t set_mask = step_table[actual_step];
     uint32_t reset_mask = MOTOR_PINS_ALL & ~set_mask;
     GPIOB -> BSRR = set_mask | (reset_mask << 16); // Set and reset motor pins accordingly
+}
 
+void vTaskMotor(void *pvParameters)
+{
+    int8_t current_dir = 0;
+    while(1) 
+    {
+        xQueueReceive(xMotorQueue, &current_dir, 0);
+
+        if (current_dir != 0)
+        {
+            Stepper_motor_step(current_dir);
+            vTaskDelay(pdMS_TO_TICKS(3)); // Delay for 3 ms
+        }
+        else
+        {
+            Stepper_motor_step(0); // Stop the motor
+            xQueueReceive(xMotorQueue, &current_dir, portMAX_DELAY); // Wait indefinitely for a new command
+        }
+    }
 }
